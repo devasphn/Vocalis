@@ -296,7 +296,30 @@ export class AudioService {
     
     // Voice detection with proper threshold handling
     if (energy > this.voiceThreshold) {
-      // Check if in a protected state (but NOT during TTS - we need interrupts)
+      // CRITICAL: Check if we're currently playing TTS audio - interrupt IMMEDIATELY
+      if ((this.isSpeaking || this.audioState === AudioState.SPEAKING) && !this.isGreeting) {
+        console.log('🛑 IMMEDIATE User interrupt detected - stopping TTS playback');
+        this.interruptPlayback();
+        websocketService.interrupt();
+        
+        // Mark voice as detected for immediate response
+        this.isVoiceDetected = true;
+        this.lastVoiceTime = Date.now();
+        
+        // Dispatch interrupt event
+        this.dispatchEvent(AudioEvent.RECORDING_DATA, { 
+          buffer: bufferCopy,
+          energy: energy,
+          isVoice: true,
+          interrupted: true
+        });
+        
+        // Continue processing the voice input
+        this.audioBuffer.push(bufferCopy);
+        return;
+      }
+      
+      // Check if in other protected states (processing, vision, greeting)
       if (this.isProcessing || this.isVisionProcessing || this.isGreeting) {
         // Still dispatch event for visualization, but mark isVoice as false
         this.dispatchEvent(AudioEvent.RECORDING_DATA, { 
@@ -311,12 +334,6 @@ export class AudioService {
       if (!this.isVoiceDetected) {
         console.log(`🎤 Voice detected (energy: ${energy.toFixed(4)}, threshold: ${this.voiceThreshold})`);
         this.isVoiceDetected = true;
-        
-        // Check if we're currently playing TTS audio - interrupt immediately
-        if ((this.isSpeaking || this.audioState === AudioState.SPEAKING) && !this.isGreeting) {
-          console.log('🛑 User interrupt detected - stopping TTS playback');
-          this.interruptPlayback();
-          websocketService.interrupt();
         }
       }
       this.lastVoiceTime = Date.now();
@@ -423,8 +440,8 @@ export class AudioService {
       return;
     }
     
-    // Don't send audio if we're in processing state
-    if (this.isProcessing) {
+    // Don't send audio if we're in processing state (but allow during interrupt)
+    if (this.isProcessing && this.audioState !== AudioState.INTERRUPTED) {
       console.log('Processing state active, discarding audio chunk');
       this.audioBuffer = [];
       return;
@@ -663,33 +680,37 @@ export class AudioService {
   }
   
   /**
-   * Interrupt audio playback (when user starts speaking)
+   * Interrupt audio playback (when user starts speaking) - CRITICAL FIX
    */
   public interruptPlayback(): void {
-    console.log('🛑 Interrupting TTS playback due to user speech');
-    
-    if (!this.currentSource) {
-      return;
-    }
+    console.log('🛑 CRITICAL: Interrupting TTS playback due to user speech');
     
     // Store previous state for the event
     const previousState = this.audioState;
     
-    try {
-      // Stop current audio immediately
-      this.currentSource.stop();
-      this.currentSource = null;
-    } catch (error) {
-      console.error('Error stopping playback during interrupt:', error);
+    // IMMEDIATE stop of current audio source
+    if (this.currentSource) {
+      try {
+        this.currentSource.stop();
+        this.currentSource.disconnect();
+        this.currentSource = null;
+        console.log('✅ Current audio source stopped and disconnected');
+      } catch (error) {
+        console.error('Error stopping playback during interrupt:', error);
+      }
     }
     
-    // Clear the entire queue to prevent continued playback
+    // CRITICAL: Clear the entire queue to prevent continued playback
+    const queueLength = this.audioQueue.length;
     this.audioQueue = [];
+    console.log(`✅ Cleared audio queue (${queueLength} chunks removed)`);
     
-    // Set state to INTERRUPTED
+    // IMMEDIATE state change to INTERRUPTED
     this.audioState = AudioState.INTERRUPTED;
     this.isPlaying = false;
     this.isSpeaking = false;
+    
+    console.log('✅ Audio state set to INTERRUPTED, playback flags reset');
     
     // Dispatch interrupt event
     this.dispatchEvent(AudioEvent.PLAYBACK_STOP, {
@@ -697,6 +718,8 @@ export class AudioService {
       reason: 'user_interrupt',
       previousState: previousState
     });
+    
+    console.log('✅ Interrupt event dispatched - TTS fully stopped');
     
     console.log('TTS playback interrupted successfully');
   }
