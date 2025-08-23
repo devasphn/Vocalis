@@ -81,7 +81,6 @@ export class AudioService {
   private silenceTimeout: number = 800; // Reduced for faster response
   private lastVoiceTime: number = 0;
   private minRecordingLength: number = 500; // Minimum ms of audio to send
-  private noiseFloor: number = 0.005; // Background noise threshold
 
   constructor(config: Partial<AudioConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -270,23 +269,14 @@ export class AudioService {
   }
 
   /**
-   * Calculate RMS (Root Mean Square) energy of an audio buffer with noise gating
+   * Calculate RMS (Root Mean Square) energy of an audio buffer
    */
   private calculateRMSEnergy(buffer: Float32Array): number {
     let sum = 0;
-    let validSamples = 0;
-    
     for (let i = 0; i < buffer.length; i++) {
-      const sample = Math.abs(buffer[i]);
-      // Only include samples above noise floor
-      if (sample > this.noiseFloor) {
-        sum += buffer[i] * buffer[i];
-        validSamples++;
-      }
+      sum += buffer[i] * buffer[i];
     }
-    
-    if (validSamples === 0) return 0;
-    const rms = Math.sqrt(sum / validSamples);
+    const rms = Math.sqrt(sum / buffer.length);
     return rms;
   }
 
@@ -304,11 +294,8 @@ export class AudioService {
     // Calculate RMS energy
     const energy = this.calculateRMSEnergy(bufferCopy);
     
-    // Advanced voice detection with noise gating and hysteresis
-    const isVoiceEnergy = energy > this.voiceThreshold;
-    const isSignificantEnergy = energy > (this.voiceThreshold * 0.7); // Hysteresis
-    
-    if (isVoiceEnergy) {
+    // Voice detection with proper threshold handling
+    if (energy > this.voiceThreshold) {
       // Check if in a protected state (but NOT during TTS - we need interrupts)
       if (this.isProcessing || this.isVisionProcessing || this.isGreeting) {
         // Still dispatch event for visualization, but mark isVoice as false
@@ -333,13 +320,6 @@ export class AudioService {
         }
       }
       this.lastVoiceTime = Date.now();
-    } else if (!isSignificantEnergy && this.isVoiceDetected) {
-      // Use hysteresis to prevent rapid on/off switching
-      const silenceDuration = Date.now() - this.lastVoiceTime;
-      if (silenceDuration > this.silenceTimeout) {
-        console.log(`🔇 Voice ended after ${silenceDuration}ms of silence`);
-        this.isVoiceDetected = false;
-      }
     }
     
     // Skip processing if in protected states
@@ -356,14 +336,16 @@ export class AudioService {
     if (this.isVoiceDetected || (Date.now() - this.lastVoiceTime) < this.silenceTimeout) {
       this.audioBuffer.push(bufferCopy);
       
-      // Check if we've exceeded silence timeout
-      const timeSinceVoice = Date.now() - this.lastVoiceTime;
-      if (energy <= this.voiceThreshold && timeSinceVoice > this.silenceTimeout) {
-        console.log('Voice ended, silence timeout exceeded');
-        this.isVoiceDetected = false;
-        
-        // Send accumulated audio
-        this.sendAudioChunk();
+      // Check if we've exceeded silence timeout only when energy is low
+      if (energy <= this.voiceThreshold) {
+        const timeSinceVoice = Date.now() - this.lastVoiceTime;
+        if (timeSinceVoice > this.silenceTimeout) {
+          console.log(`🔇 Voice ended after ${timeSinceVoice}ms of silence`);
+          this.isVoiceDetected = false;
+          
+          // Send accumulated audio
+          this.sendAudioChunk();
+        }
       }
     }
     
