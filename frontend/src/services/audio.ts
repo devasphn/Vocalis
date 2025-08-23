@@ -133,22 +133,23 @@ export class AudioService {
     
     // Always make sure context is running
     if (this.audioContext.state === 'suspended') {
-      console.log('Resuming suspended AudioContext');
+      console.log('🔊 Resuming suspended AudioContext');
       try {
         await this.audioContext.resume();
+        console.log('✅ AudioContext resumed successfully');
       } catch (error) {
-        console.error('Failed to resume AudioContext', error);
+        console.error('❌ Failed to resume AudioContext', error);
         // If resume fails, try creating a new context
         this.audioContext = null;
         return this.initAudioContext();
       }
     } else if (this.audioContext.state === 'closed') {
-      console.log('AudioContext was closed, creating new one');
+      console.log('🔊 AudioContext was closed, creating new one');
       this.audioContext = null;
       return this.initAudioContext();
     }
     
-    console.log(`AudioContext initialized, state: ${this.audioContext.state}`);
+    console.log(`✅ AudioContext initialized, state: ${this.audioContext.state}, sampleRate: ${this.audioContext.sampleRate}Hz`);
   }
 
   /**
@@ -475,7 +476,7 @@ export class AudioService {
    * This method now handles individual audio chunks for real-time streaming.
    * Each chunk is played immediately as it arrives.
    */
-  public async playAudioChunk(base64AudioChunk: string, format: string = 'wav'): Promise<void> {
+  public async playAudioChunk(base64AudioChunk: string): Promise<void> {
     try {
       await this.initAudioContext();
       
@@ -486,13 +487,13 @@ export class AudioService {
       // Convert base64 to ArrayBuffer
       const audioData = WebSocketService.base64ToArrayBuffer(base64AudioChunk);
       
-      console.log(`Received audio chunk (${audioData.byteLength} bytes) - processing immediately`);
+      console.log(`🔊 Received audio chunk (${audioData.byteLength} bytes) - processing immediately`);
       
       // Decode the audio data immediately
       try {
         const audioBuffer = await this.audioContext.decodeAudioData(audioData);
         
-        console.log(`Decoded audio chunk: duration=${audioBuffer.duration.toFixed(3)}s`);
+        console.log(`✅ Decoded audio chunk: duration=${audioBuffer.duration.toFixed(3)}s, channels=${audioBuffer.numberOfChannels}, sampleRate=${audioBuffer.sampleRate}Hz`);
         
         // Add to queue for sequential playback
         this.audioQueue.push(audioBuffer);
