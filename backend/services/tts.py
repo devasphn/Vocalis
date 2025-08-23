@@ -233,6 +233,7 @@ class TTSClient:
                 "speed": self.speed
             }
             
+            logger.info(f"🎯 TTS Request: voice='{self.voice}', text='{text[:50]}{'...' if len(text) > 50 else ''}'")
             logger.info(f"Starting real-time TTS streaming for {len(text)} characters")
             
             # Use asyncio-compatible HTTP client for true async streaming
