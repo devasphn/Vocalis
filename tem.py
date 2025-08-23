@@ -12,16 +12,11 @@ This script validates all audio improvements made to the Vocalis + Orpheus-FastA
 Run this script to verify the system is production-ready.
 """
 
-import asyncio
 import json
 import time
-import wave
-import numpy as np
 import requests
-import websockets
-import base64
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional
 import logging
 
 # Configure logging
@@ -236,7 +231,7 @@ class AudioSystemValidator:
         
         return {'status': 'error'}
     
-    async def validate_streaming_performance(self) -> Dict:
+    def validate_streaming_performance(self) -> Dict:
         """Validate real-time streaming performance"""
         logger.info("🚀 Validating streaming performance...")
         
@@ -255,18 +250,19 @@ class AudioSystemValidator:
             chunk_count = 0
             first_chunk_time = None
             
-            async with requests.post(
+            response = requests.post(
                 self.tts_endpoint,
                 json=payload,
                 stream=True,
                 timeout=30
-            ) as response:
-                if response.status_code == 200:
-                    async for chunk in response.iter_content(chunk_size=4096):
-                        if chunk:
-                            chunk_count += 1
-                            if first_chunk_time is None:
-                                first_chunk_time = time.time() - start_time
+            )
+            
+            if response.status_code == 200:
+                for chunk in response.iter_content(chunk_size=4096):
+                    if chunk:
+                        chunk_count += 1
+                        if first_chunk_time is None:
+                            first_chunk_time = time.time() - start_time
             
             total_time = time.time() - start_time
             
@@ -352,14 +348,14 @@ class AudioSystemValidator:
         
         return {'status': 'error'}
     
-    async def run_full_validation(self) -> Dict:
+    def run_full_validation(self) -> Dict:
         """Run complete validation suite"""
         logger.info("🔧 Starting comprehensive audio system validation...")
         
         # Run all validation tests
         self.results['format_validation'] = self.validate_audio_formats()
         self.results['vad_validation'] = self.validate_vad_system()
-        self.results['streaming_validation'] = await self.validate_streaming_performance()
+        self.results['streaming_validation'] = self.validate_streaming_performance()
         self.results['audio_quality'] = self.validate_audio_quality()
         
         # Calculate overall status
@@ -457,12 +453,12 @@ class AudioSystemValidator:
         
         return "\n".join(report)
 
-async def main():
+def main():
     """Run the validation suite"""
     validator = AudioSystemValidator()
     
     try:
-        results = await validator.run_full_validation()
+        results = validator.run_full_validation()
         report = validator.generate_report()
         
         # Save results
@@ -481,5 +477,5 @@ async def main():
         return False
 
 if __name__ == "__main__":
-    success = asyncio.run(main())
+    success = main()
     exit(0 if success else 1)
