@@ -29,7 +29,7 @@ class TTSClient:
         self,
         api_endpoint: str = "http://0.0.0.0:5005/v1/audio/speech/stream",
         model: str = "tts-1",
-        voice: str = "tara",
+        voice: str = "ऋतिका",
         output_format: str = "wav",
         speed: float = 1.0,
         timeout: int = 60,
@@ -208,7 +208,7 @@ class TTSClient:
         finally:
             self.is_processing = False
     
-    async def stream_text_to_speech_async(self, text: str):
+    async def stream_text_to_speech_async(self, text: str, cancel_event: asyncio.Event = None):
         """
         Asynchronously stream individual audio chunks from the TTS API.
         Each chunk is a complete playable audio segment.
@@ -251,6 +251,11 @@ class TTSClient:
                     
                     # Stream raw chunks and reconstruct individual audio segments
                     async for raw_chunk in response.content.iter_chunked(self.chunk_size):
+                        # Check for cancellation
+                        if cancel_event and cancel_event.is_set():
+                            logger.info(" TTS streaming cancelled by interrupt event")
+                            break
+                            
                         if not raw_chunk:
                             continue
                             
