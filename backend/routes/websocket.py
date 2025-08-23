@@ -175,6 +175,17 @@ class WebSocketManager:
         """
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+        
+        # Stop any ongoing TTS generation
+        if self.tts_client.is_processing:
+            logger.info("🛑 Client disconnected - stopping TTS generation")
+            self.interrupt_playback.set()
+        
+        # Cancel any ongoing audio processing task
+        if self.current_audio_task and not self.current_audio_task.done():
+            logger.info("🛑 Client disconnected - cancelling audio processing")
+            self.current_audio_task.cancel()
+        
         logger.info(f"Client disconnected. Active connections: {len(self.active_connections)}")
     
     async def _send_status(self, websocket: WebSocket, status: str, data: Dict[str, Any]):
@@ -357,20 +368,17 @@ class WebSocketManager:
             
             await self._send_status(websocket, "generating_speech", {})
             
-            # Stream audio chunks in real-time
-            async for audio_chunk in self.tts_client.stream_text_to_speech_async(text):
-                # Check if playback should be interrupted
+            # Stream TTS audio chunks in real time with cancellation support
+            async for audio_chunk in self.tts_client.stream_text_to_speech_async(text, self.interrupt_playback):
                 if self.interrupt_playback.is_set():
                     logger.info("TTS streaming interrupted")
-                    return
+                    break
                 
-                # Encode and send each audio chunk immediately
-                encoded_audio = base64.b64encode(audio_chunk).decode("utf-8")
+                # Send audio chunk to client
                 await websocket.send_json({
                     "type": MessageType.TTS_CHUNK,
-                    "audio_chunk": encoded_audio,
-                    "format": self.tts_client.output_format,
-                    "timestamp": datetime.now().isoformat()
+                    "audio": base64.b64encode(audio_chunk).decode('utf-8'),
+                    "chunk_size": len(audio_chunk)
                 })
             
             # Signal TTS end
