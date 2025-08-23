@@ -21,7 +21,7 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny.en")
 
 # TTS Configuration
 TTS_MODEL = os.getenv("TTS_MODEL", "tts-1")
-TTS_VOICE = os.getenv("TTS_VOICE", "tara")
+TTS_VOICE = os.getenv("TTS_VOICE", "ऋतिका")
 TTS_FORMAT = os.getenv("TTS_FORMAT", "wav")
 
 # WebSocket Server Configuration
@@ -29,9 +29,9 @@ WEBSOCKET_HOST = os.getenv("WEBSOCKET_HOST", "0.0.0.0")
 WEBSOCKET_PORT = int(os.getenv("WEBSOCKET_PORT", 8000))
 
 # Audio Processing
-VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", 0.5))
+VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", 0.015))
 VAD_BUFFER_SIZE = int(os.getenv("VAD_BUFFER_SIZE", 30))
-AUDIO_SAMPLE_RATE = int(os.getenv("AUDIO_SAMPLE_RATE", 48000))
+AUDIO_SAMPLE_RATE = int(os.getenv("AUDIO_SAMPLE_RATE", 24000))
 
 def get_config() -> Dict[str, Any]:
     """
