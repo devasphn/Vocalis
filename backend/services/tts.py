@@ -263,9 +263,9 @@ class TTSClient:
                             wav_header_received = True
                             logger.info("WAV header processed, starting audio chunk streaming")
                         
-                        # Process audio data in meaningful chunks (e.g., 0.1 seconds of audio)
-                        # At 24kHz, 16-bit mono: 0.1s = 2400 samples = 4800 bytes
-                        chunk_size_bytes = 4800  # ~0.1 seconds of audio
+                        # Process audio data in optimized chunks for real-time streaming
+                        # At 24kHz, 16-bit mono: 0.05s = 1200 samples = 2400 bytes (faster response)
+                        chunk_size_bytes = 2400  # ~0.05 seconds of audio for lower latency
                         
                         while len(accumulated_data) >= chunk_size_bytes:
                             # Extract one chunk
@@ -308,10 +308,10 @@ class TTSClient:
         """
         import struct
         
-        # WAV header parameters
-        sample_rate = 24000  # Orpheus TTS sample rate
-        num_channels = 1     # Mono
-        bits_per_sample = 16
+        # WAV header parameters - Production-grade Orpheus TTS settings
+        sample_rate = 24000  # Official Orpheus TTS sample rate
+        num_channels = 1     # Mono (required by Orpheus)
+        bits_per_sample = 16 # 16-bit PCM (official specification)
         byte_rate = sample_rate * num_channels * bits_per_sample // 8
         block_align = num_channels * bits_per_sample // 8
         data_size = len(pcm_data)
