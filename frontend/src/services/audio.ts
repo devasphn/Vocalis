@@ -114,7 +114,7 @@ export class AudioService {
   
 
   /**
-   * Initialize the audio context
+   * Initialize the audio context with user interaction handling
    */
   private async initAudioContext(): Promise<void> {
     // If context is null, create a new one
@@ -124,6 +124,7 @@ export class AudioService {
         this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
           sampleRate: this.config.sampleRate
         });
+        console.log(`AudioContext created with sample rate: ${this.audioContext.sampleRate}Hz`);
       } catch (error) {
         console.error('Failed to create AudioContext', error);
         this.dispatchEvent(AudioEvent.AUDIO_ERROR, { error });
@@ -133,10 +134,28 @@ export class AudioService {
     
     // Always make sure context is running
     if (this.audioContext.state === 'suspended') {
-      console.log('🔊 Resuming suspended AudioContext');
+      console.log('🔊 AudioContext suspended - attempting resume');
       try {
-        await this.audioContext.resume();
-        console.log('✅ AudioContext resumed successfully');
+        // Create a user interaction handler if needed
+        if (document.visibilityState === 'visible') {
+          await this.audioContext.resume();
+          console.log('✅ AudioContext resumed successfully');
+        } else {
+          console.log('⚠️ Document not visible, AudioContext may need user interaction');
+          // Set up one-time click handler to resume context
+          const resumeHandler = async () => {
+            try {
+              await this.audioContext?.resume();
+              console.log('✅ AudioContext resumed after user interaction');
+              document.removeEventListener('click', resumeHandler);
+              document.removeEventListener('keydown', resumeHandler);
+            } catch (e) {
+              console.error('Failed to resume AudioContext after user interaction:', e);
+            }
+          };
+          document.addEventListener('click', resumeHandler, { once: true });
+          document.addEventListener('keydown', resumeHandler, { once: true });
+        }
       } catch (error) {
         console.error('❌ Failed to resume AudioContext', error);
         // If resume fails, try creating a new context
@@ -153,49 +172,46 @@ export class AudioService {
   }
 
   /**
-   * Start recording audio
+   * Start recording audio with proper permission handling
    */
   public async startRecording(): Promise<void> {
     if (this.audioState === AudioState.RECORDING) {
-      console.log('Already recording');
       return;
     }
 
     try {
+      // Initialize audio context first
       await this.initAudioContext();
+
+      console.log('Requesting microphone permissions...');
       
-      // Request microphone access
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      // Get user media with optimized constraints for 24kHz
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: this.config.sampleRate,
+          sampleRate: { ideal: this.config.sampleRate },
           channelCount: this.config.channelCount,
           echoCancellation: this.config.echoCancellation,
           noiseSuppression: this.config.noiseSuppression,
           autoGainControl: this.config.autoGainControl
         }
       });
-      
-      // Apply mute state if already set
-      if (this.isMuted && this.mediaStream) {
-        this.mediaStream.getAudioTracks().forEach(track => {
-          track.enabled = !this.isMuted;
-        });
-      }
-      
-      // Create media stream source
+
+      console.log('✅ Microphone access granted');
+      this.mediaStream = stream;
+
       if (this.audioContext) {
-        this.mediaStreamSource = this.audioContext.createMediaStreamSource(this.mediaStream);
+        // Ensure AudioContext is running before creating nodes
+        if (this.audioContext.state === 'suspended') {
+          await this.audioContext.resume();
+        }
         
-        // Create script processor for recording
-        this.scriptProcessor = this.audioContext.createScriptProcessor(
-          this.config.bufferSize,
-          this.config.channelCount,
-          this.config.channelCount
-        );
-        
-        // Connect nodes
+        // Create audio processing nodes
+        this.mediaStreamSource = this.audioContext.createMediaStreamSource(stream);
+        this.scriptProcessor = this.audioContext.createScriptProcessor(this.config.bufferSize, 1, 1);
+
+        // Connect nodes - don't connect to destination to avoid feedback
         this.mediaStreamSource.connect(this.scriptProcessor);
-        this.scriptProcessor.connect(this.audioContext.destination);
+        // Note: Not connecting scriptProcessor to destination to prevent audio feedback
         
         // Handle audio processing
         this.scriptProcessor.onaudioprocess = this.handleAudioProcess.bind(this);
@@ -206,20 +222,28 @@ export class AudioService {
         // Set state
         this.audioState = AudioState.RECORDING;
         
-        // Reset voice detection state
+        // Reset voice detection state with optimized threshold for 24kHz
         this.isVoiceDetected = false;
         this.lastVoiceTime = 0;
+        this.voiceThreshold = 0.015; // Optimized for 24kHz
         
-        // Log voice detection threshold
-        console.log(`Voice detection enabled with threshold: ${this.voiceThreshold}`);
+        // Log voice detection configuration
+        console.log(`🎤 Recording started - Sample rate: ${this.audioContext.sampleRate}Hz, Threshold: ${this.voiceThreshold}`);
         
         // Dispatch event
         this.dispatchEvent(AudioEvent.RECORDING_START, {});
         
-        console.log('Recording started');
+        console.log('✅ Recording initialized successfully');
       }
-    } catch (error) {
-      console.error('Error starting recording:', error);
+    } catch (error: any) {
+      console.error('❌ Error starting recording:', error);
+      if (error?.name === 'NotAllowedError') {
+        console.error('Microphone permission denied by user');
+      } else if (error?.name === 'NotFoundError') {
+        console.error('No microphone found');
+      } else if (error?.name === 'NotReadableError') {
+        console.error('Microphone is already in use');
+      }
       this.dispatchEvent(AudioEvent.AUDIO_ERROR, { error });
       this.stopRecording();
       throw error;
