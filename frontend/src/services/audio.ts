@@ -16,14 +16,14 @@ interface AudioConfig {
   bufferSize: number;
 }
 
-// Default audio configuration
+// Default audio configuration - Optimized for Orpheus TTS
 const DEFAULT_CONFIG: AudioConfig = {
-  sampleRate: 44100, // Match microphone's native sample rate
+  sampleRate: 24000, // Match Orpheus TTS sample rate (24kHz)
   channelCount: 1, // Mono
   echoCancellation: true,
   noiseSuppression: true,
   autoGainControl: true,
-  bufferSize: 4096
+  bufferSize: 2048 // Optimized for real-time streaming
 };
 
 // Audio service state
@@ -75,12 +75,13 @@ export class AudioService {
   private isGreeting: boolean = false;
   private isVisionProcessing: boolean = false;
   
-  // Voice detection parameters
+  // Voice detection parameters - Production-grade tuning
   private isVoiceDetected: boolean = false;
-  private voiceThreshold: number = 0.03; // Voice detection threshold (increased for better interrupt detection)
-  private silenceTimeout: number = 1000; // ms to keep recording after voice drops below threshold
+  private voiceThreshold: number = 0.015; // Optimized threshold for 24kHz audio
+  private silenceTimeout: number = 800; // Reduced for faster response
   private lastVoiceTime: number = 0;
-  private minRecordingLength: number = 1000; // Minimum ms of audio to send
+  private minRecordingLength: number = 500; // Minimum ms of audio to send
+  private noiseFloor: number = 0.005; // Background noise threshold
 
   constructor(config: Partial<AudioConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -269,14 +270,23 @@ export class AudioService {
   }
 
   /**
-   * Calculate RMS (Root Mean Square) energy of an audio buffer
+   * Calculate RMS (Root Mean Square) energy of an audio buffer with noise gating
    */
   private calculateRMSEnergy(buffer: Float32Array): number {
     let sum = 0;
+    let validSamples = 0;
+    
     for (let i = 0; i < buffer.length; i++) {
-      sum += buffer[i] * buffer[i]; // Square each sample
+      const sample = Math.abs(buffer[i]);
+      // Only include samples above noise floor
+      if (sample > this.noiseFloor) {
+        sum += buffer[i] * buffer[i];
+        validSamples++;
+      }
     }
-    const rms = Math.sqrt(sum / buffer.length); // RMS = square root of average
+    
+    if (validSamples === 0) return 0;
+    const rms = Math.sqrt(sum / validSamples);
     return rms;
   }
 
@@ -294,16 +304,13 @@ export class AudioService {
     // Calculate RMS energy
     const energy = this.calculateRMSEnergy(bufferCopy);
     
-    // Check if energy is above threshold (voice detected)
-    if (energy > this.voiceThreshold) {
+    // Advanced voice detection with noise gating and hysteresis
+    const isVoiceEnergy = energy > this.voiceThreshold;
+    const isSignificantEnergy = energy > (this.voiceThreshold * 0.7); // Hysteresis
+    
+    if (isVoiceEnergy) {
       // Check if in a protected state (but NOT during TTS - we need interrupts)
       if (this.isProcessing || this.isVisionProcessing || this.isGreeting) {
-        let state = "processing";
-        if (this.isVisionProcessing) state = "vision_processing";
-        if (this.isGreeting) state = "greeting";
-        
-        console.log(`Voice detected during ${state} (energy: ${energy.toFixed(4)}), ignoring`);
-        
         // Still dispatch event for visualization, but mark isVoice as false
         this.dispatchEvent(AudioEvent.RECORDING_DATA, { 
           buffer: bufferCopy,
@@ -315,30 +322,32 @@ export class AudioService {
       }
       
       if (!this.isVoiceDetected) {
-        console.log('Voice detected, energy:', energy);
+        console.log(`🎤 Voice detected (energy: ${energy.toFixed(4)}, threshold: ${this.voiceThreshold})`);
         this.isVoiceDetected = true;
         
-        // Check if we're currently playing TTS audio - if so, interrupt it immediately
+        // Check if we're currently playing TTS audio - interrupt immediately
         if ((this.isSpeaking || this.audioState === AudioState.SPEAKING) && !this.isGreeting) {
-          console.log('🛑 User started speaking while assistant was speaking - interrupting TTS playback',
-                     `isSpeaking=${this.isSpeaking}, audioState=${this.audioState}, energy=${energy.toFixed(4)}`);
-          // Stop playback with proper interrupt handling
+          console.log('🛑 User interrupt detected - stopping TTS playback');
           this.interruptPlayback();
-          // Send interrupt signal to server
           websocketService.interrupt();
-          // Continue processing the user's voice input
         }
       }
       this.lastVoiceTime = Date.now();
+    } else if (!isSignificantEnergy && this.isVoiceDetected) {
+      // Use hysteresis to prevent rapid on/off switching
+      const silenceDuration = Date.now() - this.lastVoiceTime;
+      if (silenceDuration > this.silenceTimeout) {
+        console.log(`🔇 Voice ended after ${silenceDuration}ms of silence`);
+        this.isVoiceDetected = false;
+      }
     }
     
-    // If in a protected state (but NOT during TTS - we need to capture user interrupts)
+    // Skip processing if in protected states
     if (this.isProcessing || this.isVisionProcessing || this.isGreeting) {
-      // Dispatch event for visualization only
       this.dispatchEvent(AudioEvent.RECORDING_DATA, { 
         buffer: bufferCopy,
         energy: energy,
-        isVoice: false // Force false during processing
+        isVoice: false
       });
       return;
     }
@@ -546,10 +555,22 @@ export class AudioService {
     this.isSpeaking = true;
     this.audioState = AudioState.SPEAKING;
     
-    // Create source node
+    // Create source node with gain for fade effects
     const source = this.audioContext.createBufferSource();
+    const gainNode = this.audioContext.createGain();
+    
     source.buffer = buffer;
-    source.connect(this.audioContext.destination);
+    source.connect(gainNode);
+    gainNode.connect(this.audioContext.destination);
+    
+    // Apply fade-in/fade-out to prevent audio clicks (production-grade)
+    const fadeTime = 0.005; // 5ms fade
+    const currentTime = this.audioContext.currentTime;
+    
+    gainNode.gain.setValueAtTime(0, currentTime);
+    gainNode.gain.linearRampToValueAtTime(1, currentTime + fadeTime);
+    gainNode.gain.linearRampToValueAtTime(1, currentTime + buffer.duration - fadeTime);
+    gainNode.gain.linearRampToValueAtTime(0, currentTime + buffer.duration);
     
     // Handle when this chunk ends
     source.onended = () => {
