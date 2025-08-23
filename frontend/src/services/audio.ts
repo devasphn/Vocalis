@@ -334,19 +334,8 @@ export class AudioService {
       if (!this.isVoiceDetected) {
         console.log(`🎤 Voice detected (energy: ${energy.toFixed(4)}, threshold: ${this.voiceThreshold})`);
         this.isVoiceDetected = true;
-        }
       }
       this.lastVoiceTime = Date.now();
-    }
-    
-    // Skip processing if in protected states
-    if (this.isProcessing || this.isVisionProcessing || this.isGreeting) {
-      this.dispatchEvent(AudioEvent.RECORDING_DATA, { 
-        buffer: bufferCopy,
-        energy: energy,
-        isVoice: false
-      });
-      return;
     }
     
     // Add to buffer if voice is detected or we're in the silence timeout period
